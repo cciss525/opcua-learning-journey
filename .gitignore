@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment
+venv/
+.venv/
+
+# Claude AI local settings
+.claude/
+
+# Session transcripts
+*.jsonl
+
+# IDE
+.vscode/
+
+# OS
+Thumbs.db
+Desktop.ini
