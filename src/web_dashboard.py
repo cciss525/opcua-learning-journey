@@ -1,48 +1,53 @@
 """
 工厂设备实时监控面板 — Web Dashboard
-启动方式: python web_dashboard.py
+启动方式: python src/web_dashboard.py
 浏览器打开: http://localhost:8080
+配置文件: config.yaml
 
-前提: 先启动 opcua_server.py (模拟工厂设备)
+前提: 先启动 src/opcua_server.py (模拟工厂设备)
 """
 
 import asyncio
 import json
-from asyncua import Client, ua
-from aiohttp import web
+import time
+import yaml
 import pathlib
+from asyncua import Client
+from aiohttp import web
+
+
+def load_config():
+    """读取 config.yaml，返回 (endpoint, poll_interval, nodes_dict)"""
+    config_path = pathlib.Path(__file__).parent.parent / "config.yaml"
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    endpoint = cfg["opcua"]["endpoint"]
+    poll_interval = cfg["opcua"].get("poll_interval", 0.5)
+
+    # yaml list → {NodeId: (group, name, unit)} 字典
+    nodes = {}
+    for node in cfg["nodes"]:
+        nodes[node["id"]] = (node["group"], node["name"], node["unit"])
+
+    return endpoint, poll_interval, nodes
+
 
 # ── 全局变量，存最新数据 ──
-import time
 LATEST_DATA = {}
 LAST_UPDATE = 0.0  # 最后一次读到数据的时间戳
 
 
 async def opcua_poller():
-    """每 500ms 从 OPC UA Server 读取所有数据点，更新到 LATEST_DATA"""
+    """从配置文件读取连接信息和数据点，轮询 OPC UA Server"""
     global LATEST_DATA, LAST_UPDATE
 
-    # 定义要读取的所有数据点（NodeId -> 显示元信息）
-    NODES = {
-        "ns=2;i=3":  ("工位1·气缸",   "位置",      "mm"),
-        "ns=2;i=4":  ("工位1·气缸",   "速度",      "mm/s"),
-        "ns=2;i=5":  ("工位1·气缸",   "状态",      ""),
-        "ns=2;i=7":  ("工位1·伺服电机", "转速",     "RPM"),
-        "ns=2;i=8":  ("工位1·伺服电机", "温度",     "°C"),
-        "ns=2;i=9":  ("工位1·伺服电机", "负载",     "%"),
-        "ns=2;i=10": ("工位1",         "产线状态", ""),
-        "ns=2;i=13": ("工位2·传送带",  "速度",     "mm/s"),
-        "ns=2;i=14": ("工位2·传送带",  "状态",     ""),
-        "ns=2;i=16": ("工位2·机器人",  "X轴",      "mm"),
-        "ns=2;i=17": ("工位2·机器人",  "Y轴",      "mm"),
-        "ns=2;i=18": ("工位2·机器人",  "Z轴",      "mm"),
-        "ns=2;i=19": ("工位2·机器人",  "抓手",     ""),
-        "ns=2;i=20": ("工位2",         "产线状态", ""),
-    }
+    endpoint, poll_interval, NODES = load_config()
+    print(f"[CONFIG] 加载配置: {len(NODES)} 个数据点, 轮询间隔 {poll_interval}s")
 
     while True:
         try:
-            client = Client(url="opc.tcp://localhost:4840")
+            client = Client(url=endpoint)
             async with client:
                 print("[OPCUA] 已连接，开始轮询 14 个数据点...")
 
@@ -65,7 +70,7 @@ async def opcua_poller():
                     # 所有 14 个节点都读失败 → 连接已断
                     if success == 0:
                         raise ConnectionError("所有节点读取失败")
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(poll_interval)
 
         except Exception as e:
             print(f"[OPCUA] 连接失败({e})，2秒后重试...")
