@@ -23,7 +23,7 @@ NODE_MAP = {
     "ns=2;i=20": "factory/lineA/station02/line_status",
 }
 
-mqtt_client = mqtt.Client()
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
 
 class SubscriptionHandler:
@@ -62,11 +62,8 @@ async def main():
                 await sub.subscribe_data_change(
                     node,
                     ua.AttributeIds.Value,
-                    queue_size=10,
-                    monitoring=ua.MonitoringParameters(
-                        sampling_interval=100,
-                        queue_size=10,
-                    ),
+                    queuesize=10,
+                    sampling_interval=100,
                 )
                 print(f"Subscribed: {node_id_str}")
             except Exception as e:
