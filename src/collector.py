@@ -9,10 +9,31 @@ import asyncio
 import json
 import time
 import sys
+import logging
+from datetime import datetime
 import yaml
 import pathlib
 from asyncua import Client, ua
 import pyodbc
+
+
+def setup_logging():
+    """日志同时输出到文件和控制台"""
+    log_dir = pathlib.Path(__file__).parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+
+    log_file = log_dir / f"collector_{datetime.now().strftime('%Y%m%d')}.log"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=[
+            logging.FileHandler(log_file, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
+    return logging.getLogger("collector")
 
 
 def load_config():
@@ -63,12 +84,12 @@ def init_database(conn):
     """)
 
     conn.commit()
-    print("[DB] 数据库初始化完成")
+    logger.info("数据库初始化完成")
 
 
 async def browse_nodes(endpoint):
     """浏览 OPC UA Server 的用户变量节点（跳过系统内部节点）"""
-    print(f"\n正在浏览: {endpoint}")
+    logger.info(f"正在浏览: {endpoint}")
     client = Client(url=endpoint)
     async with client:
         root = client.nodes.objects
@@ -106,51 +127,98 @@ async def _browse_folder(client, folder, depth):
         pass  # 跳过无权限的节点
 
 
-async def collect(endpoint, nodes, poll_interval, db_conn):
-    """主采集循环：轮询 OPC UA 节点并写入数据库"""
+class DataChangeHandler:
+    """OPC UA 订阅回调：数据有变化才触发，不轮询"""
+
+    def __init__(self, db_conn, server_name, node_info):
+        self.db_conn = db_conn
+        self.server_name = server_name
+        self.node_info = node_info  # {NodeId: (group, name, unit)}
+        self.count = 0
+        self.bad_count = 0
+
+    def datachange_notification(self, node, val, data):
+        """OPC UA 有变化时自动调用此方法"""
+        node_id = node.nodeid.to_string()
+        info = self.node_info.get(node_id)
+        if info is None:
+            return
+
+        group, name, unit = info
+        dv = data.monitored_item.Value
+
+        try:
+            cursor = self.db_conn.cursor()
+
+            if dv.StatusCode.is_good():
+                display_val = round(val, 1) if isinstance(val, float) else float(val)
+                cursor.execute(
+                    "INSERT INTO opcua_data (server_name, node_id, group_name, var_name, value, unit, quality) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (self.server_name, node_id, group, name, display_val, unit, dv.StatusCode.value),
+                )
+
+            elif dv.StatusCode.name.startswith("Uncertain"):
+                display_val = round(val, 1) if isinstance(val, float) else float(val)
+                cursor.execute(
+                    "INSERT INTO opcua_data (server_name, node_id, group_name, var_name, value, unit, quality) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (self.server_name, node_id, group, name, display_val, unit, dv.StatusCode.value),
+                )
+                logger.warning(f"{name} 数据质量不确定: {dv.StatusCode.name}")
+
+            else:
+                self.bad_count += 1
+                logger.warning(f"{name} 数据质量差: {dv.StatusCode.name}，不入库")
+                return
+
+            cursor.commit()
+            self.count += 1
+
+        except Exception:
+            pass
+
+
+async def collect(endpoint, nodes, db_conn):
+    """主采集循环：订阅 OPC UA 数据变化，有变化才入库"""
     server_name = endpoint.replace("opc.tcp://", "")
 
     while True:
         try:
             client = Client(url=endpoint)
             async with client:
-                print(f"[OPCUA] 已连接: {endpoint}")
+                logger.info(f"OPC UA 已连接: {endpoint}")
 
+                # 创建订阅处理器
+                handler = DataChangeHandler(db_conn, server_name, nodes)
+                sub = await client.create_subscription(period=200, handler=handler)
+
+                # 订阅所有配置的数据点
+                for nid in nodes:
+                    try:
+                        node = client.get_node(nid)
+                        await sub.subscribe_data_change(
+                            node, ua.AttributeIds.Value, queuesize=10, sampling_interval=100
+                        )
+                    except Exception as e:
+                        logger.warning(f"订阅失败 {nid}: {e}")
+
+                logger.info(f"订阅完成: {len(nodes)} 个节点，有变化自动入库")
+                logger.info("等待数据变化...")
+
+                # 保持连接，等数据自己来
                 while True:
-                    success = 0
-                    cursor = db_conn.cursor()
-
-                    for nid, (group, name, unit) in nodes.items():
-                        try:
-                            node = client.get_node(nid)
-                            val = await asyncio.wait_for(node.read_value(), timeout=0.3)
-
-                            display_val = round(val, 1) if isinstance(val, float) else float(val)
-
-                            cursor.execute(
-                                "INSERT INTO opcua_data (server_name, node_id, group_name, var_name, value, unit) "
-                                "VALUES (?, ?, ?, ?, ?, ?)",
-                                (server_name, nid, group, name, display_val, unit),
-                            )
-                            success += 1
-
-                        except (Exception, asyncio.TimeoutError):
-                            pass
-
-                    if success == 0:
-                        raise ConnectionError("所有节点读取失败")
-
-                    cursor.commit()
-                    if success > 0:
-                        print(f"[DB] 写入 {success} 条 | {name}={display_val}", end="\r")
-                    await asyncio.sleep(poll_interval)
+                    await asyncio.sleep(10)
 
         except Exception as e:
-            print(f"\n[OPCUA] 连接失败({e})，2秒后重试...")
+            logger.error(f"连接失败({e})，2秒后重试...")
             await asyncio.sleep(2)
 
 
 async def main():
+    global logger
+    logger = setup_logging()
+
     cfg = load_config()
 
     if "--browse" in sys.argv:
@@ -158,26 +226,25 @@ async def main():
         return
 
     endpoint = cfg["opcua"]["endpoint"]
-    poll_interval = cfg["opcua"].get("poll_interval", 0.5)
 
     # 构建 NodeId → (group, name, unit) 映射
     nodes = {}
     for node in cfg["nodes"]:
         nodes[node["id"]] = (node["group"], node["name"], node["unit"])
 
-    print("=" * 55)
-    print("  OPC UA 数据采集引擎")
-    print(f"  目标: {endpoint}")
-    print(f"  数据点: {len(nodes)} 个")
-    print(f"  数据库: {cfg['database']['server']}/{cfg['database']['database']}")
-    print("=" * 55)
+    logger.info("=" * 40)
+    logger.info(f"OPC UA 数据采集引擎启动")
+    logger.info(f"  目标: {endpoint}")
+    logger.info(f"  数据点: {len(nodes)} 个")
+    logger.info(f"  数据库: {cfg['database']['server']}/{cfg['database']['database']}")
+    logger.info("=" * 40)
 
-    print("[DB] 连接数据库...")
+    logger.info("连接数据库...")
     db_conn = get_db_connection(cfg)
     init_database(db_conn)
-    print("[DB] 连接成功\n")
+    logger.info("数据库连接成功")
 
-    await collect(endpoint, nodes, poll_interval, db_conn)
+    await collect(endpoint, nodes, db_conn)
 
 
 if __name__ == "__main__":

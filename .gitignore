@@ -16,6 +16,9 @@ venv/
 # IDE
 .vscode/
 
+# Logs
+logs/
+
 # OS
 Thumbs.db
 Desktop.ini

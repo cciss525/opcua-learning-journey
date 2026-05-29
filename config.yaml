@@ -1,83 +1,57 @@
-# ── OPC UA 采集配置 ──
-# 换 PLC 时只改这个文件，不碰代码
-
 opcua:
   endpoint: opc.tcp://localhost:4840
-  poll_interval: 0.5   # 轮询间隔(秒)
-
+  poll_interval: 0.5
 database:
   driver: ODBC Driver 17 for SQL Server
   server: localhost\MSSQLSERVER2019
   database: OPCUA
-  trusted_connection: "yes"   # Windows 身份验证（加引号避免被当作布尔值）
-
+  trusted_connection: 'yes'
 nodes:
-  - id: ns=2;i=3
-    group: 工位1·气缸
-    name: 位置
-    unit: mm
-
-  - id: ns=2;i=4
-    group: 工位1·气缸
-    name: 速度
-    unit: mm/s
-
-  - id: ns=2;i=5
-    group: 工位1·气缸
-    name: 状态
-    unit: ""
-
-  - id: ns=2;i=7
-    group: 工位1·伺服电机
-    name: 转速
-    unit: RPM
-
-  - id: ns=2;i=8
-    group: 工位1·伺服电机
-    name: 温度
-    unit: °C
-
-  - id: ns=2;i=9
-    group: 工位1·伺服电机
-    name: 负载
-    unit: "%"
-
-  - id: ns=2;i=10
-    group: 工位1
-    name: 产线状态
-    unit: ""
-
-  - id: ns=2;i=13
-    group: 工位2·传送带
-    name: 速度
-    unit: mm/s
-
-  - id: ns=2;i=14
-    group: 工位2·传送带
-    name: 状态
-    unit: ""
-
-  - id: ns=2;i=16
-    group: 工位2·机器人
-    name: X轴
-    unit: mm
-
-  - id: ns=2;i=17
-    group: 工位2·机器人
-    name: Y轴
-    unit: mm
-
-  - id: ns=2;i=18
-    group: 工位2·机器人
-    name: Z轴
-    unit: mm
-
-  - id: ns=2;i=19
-    group: 工位2·机器人
-    name: 抓手
-    unit: ""
-
-  - id: ns=2;i=20
-    group: 工位2
-    name: 产线状态
-    unit: ""
+- id: ns=2;i=4
+  group: 工位1·气缸
+  name: 速度
+  unit: mm/s
+- id: ns=2;i=5
+  group: 工位1·气缸
+  name: 状态
+  unit: ''
+- id: ns=2;i=8
+  group: 工位1·伺服电机
+  name: 温度
+  unit: °C
+- id: ns=2;i=9
+  group: 工位1·伺服电机
+  name: 负载
+  unit: '%'
+- id: ns=2;i=10
+  group: 工位1
+  name: 产线状态
+  unit: ''
+- id: ns=2;i=13
+  group: 工位2·传送带
+  name: 速度
+  unit: mm/s
+- id: ns=2;i=14
+  group: 工位2·传送带
+  name: 状态
+  unit: ''
+- id: ns=2;i=16
+  group: 工位2·机器人
+  name: X轴
+  unit: mm
+- id: ns=2;i=17
+  group: 工位2·机器人
+  name: Y轴
+  unit: mm
+- id: ns=2;i=18
+  group: 工位2·机器人
+  name: Z轴
+  unit: mm
+- id: ns=2;i=19
+  group: 工位2·机器人
+  name: 抓手
+  unit: ''
+- id: ns=2;i=20
+  group: 工位2
+  name: 产线状态
+  unit: ''
